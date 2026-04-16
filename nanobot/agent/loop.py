@@ -8,6 +8,7 @@ import os
 import re
 import sys
 from contextlib import AsyncExitStack
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
@@ -412,7 +413,7 @@ class AgentLoop:
                                   content="New session started.")
         if cmd == "/help":
             lines = [
-                "🐈 nanobot commands:",
+                "🐈 侬额点心 命令：",
                 "/new — Start a new conversation",
                 "/stop — Stop the current task",
                 "/restart — Restart the bot",
@@ -455,6 +456,10 @@ class AgentLoop:
         self.sessions.save(session)
         self._schedule_background(self.memory_consolidator.maybe_consolidate_by_tokens(session))
 
+        # Auto-save order if the assistant confirmed an order
+        if final_content:
+            self._try_save_order(final_content, msg.channel, msg.chat_id)
+
         if (mt := self.tools.get("message")) and isinstance(mt, MessageTool) and mt._sent_in_turn:
             return None
 
@@ -464,6 +469,134 @@ class AgentLoop:
             channel=msg.channel, chat_id=msg.chat_id, content=final_content,
             metadata=msg.metadata or {},
         )
+
+    # ------------------------------------------------------------------
+    # Order persistence (LLM extraction → SQLite)
+    # ------------------------------------------------------------------
+
+    _ORDER_EXTRACT_PROMPT = """\
+You are an order extraction assistant. Given a conversation between a restaurant server and a customer, determine:
+1. Whether a confirmed order exists (the customer explicitly confirmed / placed the order).
+2. If yes, extract the order details.
+
+Respond with ONLY a JSON object (no markdown, no extra text). Schema:
+{
+  "has_order": true/false,
+  "guests": <int or null>,
+  "items": [{"name": "菜品名", "qty": <int>, "unit_price": <float>, "subtotal": <float>}],
+  "total": <float>,
+  "remark": "<string or null>"
+}
+
+If there is no confirmed order, return: {"has_order": false}
+"""
+
+    def _try_save_order(self, content: str, channel: str, chat_id: str) -> None:
+        """Schedule background LLM extraction and SQLite persistence."""
+        self._schedule_background(
+            self._extract_and_save_order(content, channel, chat_id)
+        )
+
+    async def _extract_and_save_order(self, content: str, channel: str, chat_id: str) -> None:
+        """Use LLM to extract order info from assistant reply, then save to SQLite."""
+        import sqlite3
+
+        messages = [
+            {"role": "system", "content": self._ORDER_EXTRACT_PROMPT},
+            {"role": "user", "content": content},
+        ]
+
+        try:
+            response = await self.provider.chat_with_retry(
+                messages=messages,
+                tools=None,
+                model=self.model,
+                max_tokens=1024,
+                temperature=0.0,
+            )
+        except Exception as exc:
+            logger.warning("Order extraction LLM call failed: {}", exc)
+            return
+
+        raw = (response.content or "").strip()
+        # Strip markdown code fences if present
+        if raw.startswith("```"):
+            raw = re.sub(r"^```\w*\n?", "", raw)
+            raw = re.sub(r"\n?```$", "", raw)
+
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            logger.warning("Order extraction returned invalid JSON: {}", raw[:200])
+            return
+
+        if not data.get("has_order"):
+            return
+
+        now = datetime.now()
+        customer_id = f"{channel}_{chat_id}"
+        orders_dir = self.workspace / "orders"
+        orders_dir.mkdir(exist_ok=True)
+        db_path = orders_dir / "orders.db"
+
+        conn = sqlite3.connect(str(db_path))
+        try:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS orders (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    customer_id TEXT NOT NULL,
+                    channel TEXT,
+                    chat_id TEXT,
+                    order_time TEXT NOT NULL,
+                    guests INTEGER,
+                    total REAL,
+                    remark TEXT
+                )
+            """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS order_items (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    order_id INTEGER NOT NULL,
+                    name TEXT NOT NULL,
+                    qty INTEGER NOT NULL,
+                    unit_price REAL,
+                    subtotal REAL,
+                    FOREIGN KEY (order_id) REFERENCES orders(id)
+                )
+            """)
+
+            cursor = conn.execute(
+                "INSERT INTO orders (customer_id, channel, chat_id, order_time, guests, total, remark) VALUES (?,?,?,?,?,?,?)",
+                (
+                    customer_id,
+                    channel,
+                    chat_id,
+                    now.strftime("%Y-%m-%d %H:%M:%S"),
+                    data.get("guests"),
+                    data.get("total"),
+                    data.get("remark"),
+                ),
+            )
+            order_id = cursor.lastrowid
+
+            for item in data.get("items", []):
+                conn.execute(
+                    "INSERT INTO order_items (order_id, name, qty, unit_price, subtotal) VALUES (?,?,?,?,?)",
+                    (
+                        order_id,
+                        item.get("name", ""),
+                        item.get("qty", 0),
+                        item.get("unit_price"),
+                        item.get("subtotal"),
+                    ),
+                )
+
+            conn.commit()
+            logger.info("Order #{} saved to {} for {}", order_id, db_path, customer_id)
+        except Exception as exc:
+            logger.error("Failed to save order to SQLite: {}", exc)
+        finally:
+            conn.close()
 
     @staticmethod
     def _image_placeholder(block: dict[str, Any]) -> dict[str, str]:

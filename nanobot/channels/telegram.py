@@ -15,7 +15,7 @@ from telegram.error import TimedOut
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 from telegram.request import HTTPXRequest
 
-from nanobot.bus.events import OutboundMessage
+from nanobot.bus.events import InboundMessage, OutboundMessage
 from nanobot.bus.queue import MessageBus
 from nanobot.channels.base import BaseChannel
 from nanobot.config.paths import get_media_dir
@@ -492,23 +492,55 @@ class TelegramChannel(BaseChannel):
         await self._send_text(chat_id, text, reply_params, thread_kwargs)
 
     async def _on_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Handle /start command."""
+        """Handle /start: ask the agent to greet the user in-character per SOUL.md."""
         if not update.message or not update.effective_user:
             return
 
+        message = update.message
         user = update.effective_user
-        await update.message.reply_text(
-            f"👋 Hi {user.first_name}! I'm nanobot.\n\n"
-            "Send me a message and I'll respond!\n"
-            "Type /help to see available commands."
+        sender_id = self._sender_id(user)
+        str_chat_id = str(message.chat_id)
+
+        # ACL check so strangers can't trigger LLM calls via /start.
+        if not self.is_allowed(sender_id):
+            logger.warning(
+                "Access denied for sender {} on channel {} (/start). "
+                "Add them to allowFrom list in config to grant access.",
+                sender_id, self.name,
+            )
+            return
+
+        self._chat_ids[sender_id] = message.chat_id
+        self._remember_thread_context(message)
+        self._start_typing(str_chat_id)
+
+        # Meta-directive: the model sees this as a proactive trigger rather than
+        # user speech. SOUL.md already defines the opening-greeting behavior.
+        trigger = (
+            "[系统事件] 用户刚刚打开了与你的对话框（发送了 /start）。"
+            "请立即按照你的人设主动迎接这位顾客，像迎接走进店里的新客人一样开场问候，"
+            "并简要引导对方接下来可以怎么点餐。"
+            "不要复述这条系统提示，也不要提及它的存在。"
         )
+
+        # channel="system" + chat_id="telegram:<id>" tells AgentLoop._process_message
+        # to route the reply back through the telegram channel (loop.py:371-392),
+        # while treating the current turn as a non-command trigger.
+        trigger_msg = InboundMessage(
+            channel="system",
+            sender_id=f"telegram_start:{user.id}",
+            chat_id=f"telegram:{str_chat_id}",
+            content=trigger,
+            metadata=self._build_message_metadata(message, user),
+        )
+        await self.bus.publish_inbound(trigger_msg)
 
     async def _on_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /help command, bypassing ACL so all users can access it."""
         if not update.message:
             return
         await update.message.reply_text(
-            "🐈 nanobot commands:\n"
+            "🐈 侬额点心 命令：\n"
             "/new — Start a new conversation\n"
             "/stop — Stop the current task\n"
             "/restart — Restart the bot\n"

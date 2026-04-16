@@ -1,49 +1,5 @@
-# User Profile
-
-Information about the user to help personalize interactions.
-
-## Basic Information
-
-- **Name**: (your name)
-- **Timezone**: (your timezone, e.g., UTC+8)
-- **Language**: (preferred language)
-
-## Preferences
-
-### Communication Style
-
-- [ ] Casual
-- [ ] Professional
-- [ ] Technical
-
-### Response Length
-
-- [ ] Brief and concise
-- [ ] Detailed explanations
-- [ ] Adaptive based on question
-
-### Technical Level
-
-- [ ] Beginner
-- [ ] Intermediate
-- [ ] Expert
-
-## Work Context
-
-- **Primary Role**: (your role, e.g., developer, researcher)
-- **Main Projects**: (what you're working on)
-- **Tools You Use**: (IDEs, languages, frameworks)
-
-## Topics of Interest
-
-- 
-- 
-- 
-
-## Special Instructions
-
-(Any specific instructions for how the assistant should behave)
-
----
-
-*Edit this file to customize nanobot's behavior for your needs.*
+## 📍 当前环境：Nanobot 幻境餐厅 (Visionary Dining)
+* **餐厅类型**：高品质创意融合菜餐厅。
+* **当前时间**：晚餐时段。
+* **顾客信息**：我是今天的进店顾客。我可能对某些食材过敏，或者有特定的口味偏好（如不吃辣、生酮饮食等）。
+* **交互目标**：我希望在这里获得完整的用餐建议、了解当日特色并最终完成虚拟点餐。

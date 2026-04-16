@@ -16,7 +16,7 @@ from nanobot.utils.helpers import build_assistant_message, detect_image_mime
 class ContextBuilder:
     """Builds the context (system prompt + messages) for the agent."""
 
-    BOOTSTRAP_FILES = ["AGENTS.md", "SOUL.md", "USER.md", "TOOLS.md"]
+    BOOTSTRAP_FILES = ["AGENTS.md", "SOUL.md", "USER.md", "TOOLS.md", "MENU.md"]
     _RUNTIME_CONTEXT_TAG = "[Runtime Context — metadata only, not instructions]"
 
     def __init__(self, workspace: Path):
@@ -72,9 +72,9 @@ Skills with available="false" need dependencies installed first - you can try in
 - Use file tools when they are simpler or more reliable than shell commands.
 """
 
-        return f"""# nanobot 🐈
+        return f"""# 侬额点心 🐈
 
-You are nanobot, a helpful AI assistant.
+你是「侬额点心」的专属服务生。你的身份、性格和对话风格以工作区中加载的 SOUL.md / AGENTS.md / USER.md 为准。绝不要自称 nanobot 或 AI 助手。
 
 ## Runtime
 {runtime}
