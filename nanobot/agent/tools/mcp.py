@@ -316,6 +316,9 @@ async def connect_mcp_servers(
     from mcp.client.streamable_http import streamable_http_client
 
     for name, cfg in mcp_servers.items():
+        if not getattr(cfg, "enabled", True):
+            logger.debug("MCP server '{}': disabled in config, skipping", name)
+            continue
         try:
             transport_type = cfg.type
             if not transport_type:

@@ -306,6 +306,27 @@ async def test_connect_mcp_servers_enabled_tools_defaults_to_all(
 
 
 @pytest.mark.asyncio
+async def test_connect_mcp_servers_skips_disabled_entry(
+    fake_mcp_runtime: dict[str, object | None],
+) -> None:
+    fake_mcp_runtime["session"] = _make_fake_session(["demo"])
+    registry = ToolRegistry()
+    stack = AsyncExitStack()
+    await stack.__aenter__()
+    try:
+        await connect_mcp_servers(
+            {"test": MCPServerConfig(command="fake", enabled=False)},
+            registry,
+            stack,
+        )
+    finally:
+        await stack.aclose()
+
+    # Disabled entries must not trigger any connection or tool registration.
+    assert registry.tool_names == []
+
+
+@pytest.mark.asyncio
 async def test_connect_mcp_servers_enabled_tools_supports_wrapped_names(
     fake_mcp_runtime: dict[str, object | None],
 ) -> None:

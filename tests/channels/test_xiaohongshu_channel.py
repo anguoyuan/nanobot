@@ -17,6 +17,7 @@ from nanobot.channels.xiaohongshu import (
     XiaohongshuConfig,
     _ReplyContext,
 )
+from nanobot.cli.commands import _onboard_plugins
 
 
 def _make_channel(**overrides) -> tuple[XiaohongshuChannel, MessageBus]:
@@ -29,6 +30,64 @@ def _make_channel(**overrides) -> tuple[XiaohongshuChannel, MessageBus]:
     base.update(overrides)
     bus = MessageBus()
     return XiaohongshuChannel(XiaohongshuConfig(**base), bus), bus
+
+
+def test_onboard_plugins_seeds_xiaohongshu_channel_and_mcp_server(tmp_path) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text(json.dumps({}))
+
+    _onboard_plugins(config_path)
+
+    saved = json.loads(config_path.read_text())
+    # Channel block is seeded.
+    assert "xiaohongshu" in saved["channels"]
+    assert saved["channels"]["xiaohongshu"]["enabled"] is False
+    # MCP server block is also seeded, pointing at the same backend.
+    mcp = saved["tools"]["mcpServers"]["xiaohongshu"]
+    assert mcp["url"] == "http://localhost:18060/mcp"
+    assert mcp["enabled"] is False
+
+
+def test_onboard_plugins_preserves_user_edits_to_mcp_entry(tmp_path) -> None:
+    config_path = tmp_path / "config.json"
+    # User has already edited the MCP entry: enabled + different URL.
+    config_path.write_text(
+        json.dumps(
+            {
+                "tools": {
+                    "mcpServers": {
+                        "xiaohongshu": {
+                            "enabled": True,
+                            "url": "http://192.168.1.10:18060/mcp",
+                        }
+                    }
+                }
+            }
+        )
+    )
+
+    _onboard_plugins(config_path)
+
+    saved = json.loads(config_path.read_text())
+    mcp = saved["tools"]["mcpServers"]["xiaohongshu"]
+    # Existing user values are preserved …
+    assert mcp["enabled"] is True
+    assert mcp["url"] == "http://192.168.1.10:18060/mcp"
+    # … and missing defaults are filled in.
+    assert mcp["type"] == "streamableHttp"
+    assert mcp["enabledTools"] == ["*"]
+
+
+def test_default_mcp_servers_points_at_backend_mcp_endpoint() -> None:
+    servers = XiaohongshuChannel.default_mcp_servers()
+    assert "xiaohongshu" in servers
+    entry = servers["xiaohongshu"]
+    # Must align with the channel's default base_url so the same running
+    # xiaohongshu-mcp process serves both REST and MCP.
+    assert entry["url"] == "http://localhost:18060/mcp"
+    assert entry["type"] == "streamableHttp"
+    # Disabled by default so an unreachable backend doesn't error on gateway start.
+    assert entry["enabled"] is False
 
 
 def test_default_config_round_trips_through_dict() -> None:

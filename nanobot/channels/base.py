@@ -175,6 +175,19 @@ class BaseChannel(ABC):
         """Return default config for onboard. Override in plugins to auto-populate config.json."""
         return {"enabled": False}
 
+    @classmethod
+    def default_mcp_servers(cls) -> dict[str, dict[str, Any]]:
+        """Return MCP server entries this channel wants seeded under ``tools.mcpServers``.
+
+        Used by ``nanobot onboard`` so a channel backed by an MCP server can ship
+        its ``tools.mcpServers`` stanza alongside its ``channels.<name>`` stanza.
+        Existing user-provided entries with the same key are preserved — only
+        missing fields are filled in.
+
+        Default: contributes nothing.
+        """
+        return {}
+
     @property
     def is_running(self) -> bool:
         """Check if the channel is running."""

@@ -1,10 +1,16 @@
 """Xiaohongshu (小红书 / RedNote) channel — auto-reply for private messages and comments.
 
 Bridges nanobot to Xiaohongshu via the ``xpzouying/xiaohongshu-mcp`` HTTP API
-(https://github.com/xpzouying/xiaohongshu-mcp). The same backend can also be
-plugged in as an MCP server (see ``tools.mcpServers``) so the agent can publish
-posts, search feeds, etc. — this channel only adds the inbound/outbound bridge
-for auto-reply.
+(https://github.com/xpzouying/xiaohongshu-mcp). Covers both directions:
+
+* **Passive (auto-reply)** — this module polls the backend's REST endpoints and
+  forwards inbound 私信 / comments to the agent, then ships the agent's replies
+  back out.
+* **Active (agent-initiated)** — :meth:`XiaohongshuChannel.default_mcp_servers`
+  seeds ``tools.mcpServers.xiaohongshu`` during ``nanobot onboard`` so the same
+  backend's MCP endpoint (``{base_url}/mcp``) is registered as a tool provider.
+  The agent then gets ``publish_content`` / ``search_feeds`` /
+  ``post_comment_to_feed`` / … alongside auto-reply.
 
 Two operating modes (``mode`` config):
 
@@ -120,6 +126,31 @@ class XiaohongshuChannel(BaseChannel):
     @classmethod
     def default_config(cls) -> dict[str, Any]:
         return XiaohongshuConfig().model_dump(by_alias=True)
+
+    @classmethod
+    def default_mcp_servers(cls) -> dict[str, dict[str, Any]]:
+        """Seed ``tools.mcpServers.xiaohongshu`` so the agent can publish/search.
+
+        The same ``xpzouying/xiaohongshu-mcp`` backend the channel polls over
+        REST also exposes the MCP protocol at ``{base_url}/mcp``. Wiring it up
+        here gives the agent active capabilities (``publish_content``,
+        ``search_feeds``, ``post_comment_to_feed`` …) to complement the
+        channel's passive auto-reply role.
+
+        Disabled by default so an unreachable backend doesn't error on every
+        ``nanobot gateway`` startup — flip ``enabled`` to ``true`` once
+        xiaohongshu-mcp is running.
+        """
+        base_url = XiaohongshuConfig().base_url.rstrip("/")
+        return {
+            "xiaohongshu": {
+                "enabled": False,
+                "type": "streamableHttp",
+                "url": f"{base_url}/mcp",
+                "enabledTools": ["*"],
+                "toolTimeout": 60,
+            }
+        }
 
     def __init__(self, config: Any, bus: MessageBus):
         if isinstance(config, dict):

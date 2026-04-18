@@ -380,7 +380,12 @@ def _merge_missing_defaults(existing: Any, defaults: Any) -> Any:
 
 
 def _onboard_plugins(config_path: Path) -> None:
-    """Inject default config for all discovered channels (built-in + plugins)."""
+    """Inject default config for all discovered channels (built-in + plugins).
+
+    Also seeds any MCP server entries each channel contributes via
+    ``default_mcp_servers()`` into ``tools.mcpServers`` — existing user-edited
+    entries are preserved (only missing fields are filled in).
+    """
     import json
 
     from nanobot.channels.registry import discover_all
@@ -393,11 +398,20 @@ def _onboard_plugins(config_path: Path) -> None:
         data = json.load(f)
 
     channels = data.setdefault("channels", {})
+    mcp_servers = data.setdefault("tools", {}).setdefault("mcpServers", {})
     for name, cls in all_channels.items():
         if name not in channels:
             channels[name] = cls.default_config()
         else:
             channels[name] = _merge_missing_defaults(channels[name], cls.default_config())
+
+        for server_name, server_cfg in cls.default_mcp_servers().items():
+            if server_name not in mcp_servers:
+                mcp_servers[server_name] = server_cfg
+            else:
+                mcp_servers[server_name] = _merge_missing_defaults(
+                    mcp_servers[server_name], server_cfg
+                )
 
     with open(config_path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
