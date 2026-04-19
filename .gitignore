@@ -84,3 +84,8 @@ logs/
 tmp/
 temp/
 *.tmp
+
+# payment_monitor runtime
+.env
+.venv/
+payment_monitor/payments.db
