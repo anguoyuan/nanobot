@@ -10,7 +10,10 @@ AMOUNT_RE = re.compile(
     r"received\s+(?P<currency>[A-Z]{3})\s+(?P<amount>[\d,]+\.\d{2})",
     re.IGNORECASE,
 )
-SENDER_RE = re.compile(r"^\s*From:\s*(?P<name>[^\n\r]+?)\s*$", re.MULTILINE)
+SENDER_RE = re.compile(
+    r"From:\s+(?P<name>.+?)(?=\s+To:|[\r\n]|$)",
+    re.IGNORECASE,
+)
 TIMESTAMP_RE = re.compile(
     r"on\s+(?P<ts>\d{1,2}\s+[A-Za-z]{3}\s+\d{4}\s+\d{2}:\d{2}\s+[A-Z]{3})"
 )
@@ -57,5 +60,5 @@ def parse(text: str) -> Payment:
         amount=amount,
         currency=amount_match.group("currency").upper(),
         sender=sender_match.group("name").strip(),
-        timestamp=ts_match.group("ts") if ts_match else None,
+        timestamp=re.sub(r"\s+", " ", ts_match.group("ts")) if ts_match else None,
     )
