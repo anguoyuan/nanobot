@@ -1,4 +1,4 @@
-"""Match a received payment against the pending-payments ledger."""
+"""Match a received payment against the MySQL orders table."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from .parser import Payment
 
 
 def handle_payment(payment: Payment) -> None:
-    """Match a parsed payment against the DB and update status.
+    """Match a parsed payment against unpaid orders and update payment_status.
 
     Behaviour:
       * 0 matches -> log and ignore (not for any known order).
@@ -21,24 +21,24 @@ def handle_payment(payment: Payment) -> None:
     if not rows:
         print(
             f"[INFO] received {payment.currency} {payment.amount} from "
-            f"{payment.sender}: no pending order with this amount, ignoring."
+            f"{payment.sender}: no unpaid order with this amount, ignoring."
         )
         return
 
     if len(rows) > 1:
-        order_ids = ", ".join(r["order_id"] for r in rows)
+        order_nos = ", ".join(r["order_no"] for r in rows)
         print(
             f"[ALERT] received {payment.currency} {payment.amount} from "
-            f"{payment.sender} but {len(rows)} pending orders match "
-            f"({order_ids}). Manual review required; no action taken."
+            f"{payment.sender} but {len(rows)} unpaid orders match "
+            f"({order_nos}). Manual review required; no action taken."
         )
         return
 
     row = rows[0]
     paid_at = payment.timestamp or datetime.now(timezone.utc).isoformat()
-    db.mark_paid(row["order_id"], payment.sender, paid_at)
+    db.mark_paid(row["order_no"], payment.sender, paid_at)
     print(
-        f"[PAID] order {row['order_id']} (customer {row['customer_id']}, "
-        f"{row['currency']} {payment.amount}) marked as paid — received from "
+        f"[PAID] order {row['order_no']} (user_id {row['user_id']}, "
+        f"SGD {row['total_price']}) marked as paid — received from "
         f"{payment.sender} at {paid_at}."
     )

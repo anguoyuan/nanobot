@@ -1,53 +1,39 @@
-"""SQLite helpers for the pending-payments ledger."""
+"""MySQL helpers for the orders payment ledger.
+
+Connects directly to the tea-order-system MySQL database
+and operates on the `orders` table's `payment_status` column.
+"""
 
 from __future__ import annotations
 
-import sqlite3
+import os
 from decimal import Decimal
-from pathlib import Path
-from typing import Iterable
 
-DB_PATH = Path(__file__).parent / "payments.db"
+import pymysql
+import pymysql.cursors
 
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS pending_payments (
-    order_id      TEXT PRIMARY KEY,
-    customer_id   TEXT NOT NULL,
-    amount_cents  INTEGER NOT NULL,
-    currency      TEXT NOT NULL DEFAULT 'SGD',
-    status        TEXT NOT NULL DEFAULT 'pending',
-    paid_at       TEXT,
-    paid_by       TEXT
-);
-"""
+# MySQL connection config — reuse the same credentials as the Node backend.
+# Password must be provided via DB_PASSWORD env var (no default), matching the
+# policy in the Node backend's .env. See .env.example for the full list.
+_DB_PASSWORD = os.environ.get("DB_PASSWORD")
+if not _DB_PASSWORD:
+    raise SystemExit(
+        "DB_PASSWORD env var is required. Copy .env.example to .env and fill it in."
+    )
 
-MOCK_ROWS = [
-    ("ORD-1001", "CUST-001", 850,   "SGD", "pending"),   # 8.50
-    ("ORD-1002", "CUST-002", 2499,  "SGD", "pending"),   # 24.99
-    ("ORD-1003", "CUST-003", 12000, "SGD", "pending"),   # 120.00
-    ("ORD-1004", "CUST-004", 5000,  "SGD", "pending"),   # 50.00  (dup amount)
-    ("ORD-1005", "CUST-005", 5000,  "SGD", "pending"),   # 50.00  (dup amount)
-    ("ORD-1006", "CUST-006", 999,   "SGD", "pending"),   # 9.99
-]
+DB_CONFIG = {
+    "host": os.getenv("DB_HOST", "localhost"),
+    "port": int(os.getenv("DB_PORT", 3306)),
+    "user": os.getenv("DB_USER", "root"),
+    "password": _DB_PASSWORD,
+    "database": os.getenv("DB_NAME", "tea_order_system"),
+    "charset": "utf8mb4",
+    "cursorclass": pymysql.cursors.DictCursor,
+}
 
 
-def connect(db_path: Path | None = None) -> sqlite3.Connection:
-    conn = sqlite3.connect(db_path or DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
-
-
-def init_db(db_path: Path | None = None, rows: Iterable[tuple] = MOCK_ROWS) -> None:
-    with connect(db_path) as conn:
-        conn.executescript(SCHEMA)
-        conn.execute("DELETE FROM pending_payments")
-        conn.executemany(
-            "INSERT INTO pending_payments "
-            "(order_id, customer_id, amount_cents, currency, status) "
-            "VALUES (?, ?, ?, ?, ?)",
-            rows,
-        )
-        conn.commit()
+def connect() -> pymysql.Connection:
+    return pymysql.connect(**DB_CONFIG)
 
 
 def to_cents(amount: Decimal) -> int:
@@ -57,35 +43,52 @@ def to_cents(amount: Decimal) -> int:
 def find_pending_by_amount(
     amount: Decimal,
     currency: str = "SGD",
-    db_path: Path | None = None,
-) -> list[sqlite3.Row]:
-    with connect(db_path) as conn:
-        cur = conn.execute(
-            "SELECT * FROM pending_payments "
-            "WHERE status = 'pending' AND currency = ? AND amount_cents = ?",
-            (currency, to_cents(amount)),
-        )
-        return cur.fetchall()
+) -> list[dict]:
+    """Find unpaid orders whose total_price matches the payment amount."""
+    conn = connect()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id, order_no, user_id, total_price, payment_status "
+                "FROM orders "
+                "WHERE payment_status = 'unpaid' "
+                "AND ROUND(total_price * 100) = %s",
+                (to_cents(amount),),
+            )
+            return cur.fetchall()
+    finally:
+        conn.close()
 
 
 def mark_paid(
-    order_id: str,
+    order_no: str,
     paid_by: str,
     paid_at: str,
-    db_path: Path | None = None,
 ) -> None:
-    with connect(db_path) as conn:
-        conn.execute(
-            "UPDATE pending_payments "
-            "SET status = 'paid', paid_at = ?, paid_by = ? "
-            "WHERE order_id = ? AND status = 'pending'",
-            (paid_at, paid_by, order_id),
-        )
+    """Set payment_status = 'paid' for the given order."""
+    conn = connect()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE orders "
+                "SET payment_status = 'paid' "
+                "WHERE order_no = %s AND payment_status = 'unpaid'",
+                (order_no,),
+            )
         conn.commit()
+    finally:
+        conn.close()
 
 
 if __name__ == "__main__":
-    init_db()
-    with connect() as conn:
-        for row in conn.execute("SELECT * FROM pending_payments"):
-            print(dict(row))
+    conn = connect()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id, order_no, user_id, total_price, payment_status "
+                "FROM orders ORDER BY create_time DESC LIMIT 20"
+            )
+            for row in cur.fetchall():
+                print(row)
+    finally:
+        conn.close()
